@@ -8,3 +8,5 @@ cd aes-t100
 ```bash
 dc_shell -f do_synthesis.tcl
 ```
+
+Netlist will be output to file "aes_netlist.v"
