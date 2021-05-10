@@ -42,7 +42,15 @@ remove_faults -all
 
 #set assets [join] ## list of key pins
 
-set asset "rst"
+set asset "key[127]"
+set ObservePoints ""
+
+# enable scan for all flip-flops
+drc -force
+set_scan_ability on -all
+
+#loop up here for assets
+
 
 set FanoutFinal ""
 redirect -file FanoutFinal.temp {report_fanout -from $asset}
@@ -66,24 +74,138 @@ foreach FO $FanoutFinal {
 #change back to TEST mode for this (redirect to null bc lots of verbose stuff otherwise)
 #test > /dev/null
 
+set FanoutTemp ""
+set isNewNets [expr 0]
+set FF_Level [expr 1]
+
 while 1 {
 	foreach FO $FanoutFinal {
+		echo ---------Processing new fanout $FO -------------
+		set detectedFaults [expr 0]
 		drc -force
+
+		# Removing the capture mask is not as easy as the paper makes it seem
+		# Need to remove mask from current register AND capture masks from all previous fanin registers
+		# Otherwise, fault propogation will be blocked at first masked register in the Asset fanout
+		# This loop unmasks the full fanin for a given net until it reaches the Asset pin
 		remove_capture_masks $FO
+		set propagation_path ""
+		set unmask_gate_name $FO
+		set do_break [expr 0]
+		while 1 {
+			report_fanin -to ${unmask_gate_name}/D > FanIn.temp
+			sh python process_unmask_fanin.py $asset
+			set fanin_file_handle [open FanIn_out.temp r]
+               		#should only be one line I'm just reusing this while loop cause its been working
+			while { [gets $fanin_file_handle each_line] != -1} {
+                        	if { [regexp -all "STOP" $each_line] == 1 } {
+                                	set do_break [expr 1]
+					break
+                        	}
+				if { [regexp -all "STOP" $each_line] == 0} {
+					set unmask_gate_name $each_line
+                        	}
+        	        }
+
+			# check if we've reached the Asset pin yet
+			if ([expr $do_break == 1]) {
+				break
+			}
+			
+			lappend propagation_path $unmask_gate_name
+			echo Unmasking $unmask_gate_name
+			remove_capture_masks $unmask_gate_name
+	                close $fanin_file_handle
+	
+		}
+		set propagation_path [join $propagation_path]
+
 		test > /dev/null
 		add_faults $asset -stuck 01
 		run_atpg FUll_sequential_only
-		analyze_faults $asset -stuck 0
-		analyze_faults $asset -stuck 1
+
+		# need to get primitive gate ID for a given named net...annoying
+		report_primitives $FO > Primitive.temp
+		sh python process_gate_primitive.py
+		set primitive_file_handle [open Primitive_out.temp r]
+                while { [gets $primitive_file_handle each_line] != -1} {
+			set gate_id $each_line
+                }
+		close $primitive_file_handle
+
+
+		analyze_faults $asset -stuck 0 -observe $gate_id > fault0.temp
+		analyze_faults $asset -stuck 1 -observe $gate_id > fault1.temp
+		sh python process_fault0.py
+		sh python process_fault1.py
+
+		set fault_file_handle [open fault0_out.temp r]
+		while { [gets $fault_file_handle each_line] != -1} {
+        		if { [regexp -all "detected" $each_line] == 1 } {
+				set detectedFaults [expr $detectedFaults + 1]
+			}
+		}
+		close $fault_file_handle
+
+		set fault_file_handle [open fault1_out.temp r]
+		while { [gets $fault_file_handle each_line] != -1} {
+                        if { [regexp -all "detected" $each_line] == 1 } {
+                                set detectedFaults [expr $detectedFaults + 1]
+                        }
+                }
+		close $fault_file_handle
 		
-		##if (detectedFaults > 1) {
-			## logic here
-		##}
+		if ([expr $detectedFaults > 1]) {
+			lappend ObservePoints $FO
+
+			# append to FanoutTemp
+			set pinPath ${FO}/Q
+			redirect -file FanoutFinal.temp {report_fanout -from $pinPath}
+			sh python process_fanout.py
+			set fanout_file_handle [open FanoutFinal_out.temp r]
+			while { [gets $fanout_file_handle each_line] != -1} {
+			        lappend FanoutTemp $each_line
+				set isNewNets [expr 1]
+			}
+			close $fanout_file_handle
+
+			set pinPath ${FO}/QN
+                        redirect -file FanoutFinal.temp {report_fanout -from $pinPath}
+                        sh python process_fanout.py
+                        set fanout_file_handle [open FanoutFinal_out.temp r]
+                        while { [gets $fanout_file_handle each_line] != -1} {
+                                lappend FanoutTemp $each_line
+				set isNewNets [expr 1]
+                        }
+			close $fanout_file_handle
+			
+			drc -force
+			set_scan_ability off $FO
+
+			# need to re-add the capture masks from the previously calculated propagation path
+			foreach net $propagation_path {
+				echo Adding mask for $net
+				add_capture_mask $net
+			}
+			echo Adding mask for $FO
+			add_capture_mask $FO
+		}
 
 	}
-	# temporary
-	break
 
+	# check break condition
+	set FanoutTemp [join $FanoutTemp]	
+	if ([expr $isNewNets == 1]) {
+		set FanoutFinal $FanoutTemp
+		set FF_Level [expr $FF_Level + 1]	
+	}
+	if ([expr $isNewNets == 0]) {
+		echo Done
+		break
+	}
+	if ([expr $FF_Level == 3]) {
+		break
+	}
 }
 
-exit
+#exit
