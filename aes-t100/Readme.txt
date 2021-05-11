@@ -23,6 +23,10 @@ Trojan Taxonomy
 	Physical characteristics: Functional
 
 
-[1] L. Lin, M. Kasper, T. Güneysu, C. Paar and W. Burleson, "Trojan Side-Channels: Lightweight Hardware Trojans 
+[1] L. Lin, M. Kasper, T. GÃ¼neysu, C. Paar and W. Burleson, "Trojan Side-Channels: Lightweight Hardware Trojans 
 through Side-Channel Engineering," 11th International Workshop Cryptographic Hardware and Embedded Systems (CHES), 
 pp.382-395, 2009.
+
+
+
+-(We will use such a method with AES - T100 for confidentiality verification)
