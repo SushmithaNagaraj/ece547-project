@@ -1,4 +1,4 @@
-## Do confidentiality check on imported netlist
+## Do confidentiality check on imported netlist.
 
 ## setup stuff
 set top_module aes_netlist
